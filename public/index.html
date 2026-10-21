@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM Gateway — Resilience Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117; --panel: #161922; --border: #232734; --text: #e4e6eb;
+      --muted: #8b8f9a; --accent: #4f8cff; --green: #34d399;
+      --amber: #fbbf24; --red: #f87171;
+      --mono: 'SF Mono', Consolas, monospace;
+    }
+    body { background: var(--bg); color: var(--text); min-height: 100vh;
+           font-family: -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column; }
+    header { border-bottom: 1px solid var(--border); padding: 20px 32px;
+             display: flex; justify-content: space-between; align-items: center; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { width: 32px; height: 32px; border-radius: 8px;
+            background: linear-gradient(135deg, #4f8cff, #8b5cf6);
+            display: grid; place-items: center; font-weight: 700; }
+    h1 { font-size: 16px; font-weight: 600; }
+    .brand p { font-size: 12px; color: var(--muted); }
+    .status { display: flex; align-items: center; gap: 8px;
+              font-size: 12px; font-family: var(--mono); color: var(--muted); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .3s; }
+    .dot.ok { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .dot.down { background: var(--red); box-shadow: 0 0 8px var(--red); }
+    .dot.degraded { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+    main { flex: 1; display: grid; grid-template-columns: 420px 1fr;
+           gap: 24px; padding: 32px; max-width: 1400px; margin: 0 auto; width: 100%; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 16px; } }
+    .panel { background: var(--panel); border: 1px solid var(--border);
+             border-radius: 12px; padding: 24px; }
+    .panel h2 { font-size: 13px; font-weight: 600; text-transform: uppercase;
+                letter-spacing: 0.05em; color: var(--muted); margin-bottom: 20px; }
+    .field { margin-bottom: 20px; }
+    .field label { display: block; font-size: 13px; margin-bottom: 8px; }
+    .field label span { color: var(--muted); }
+    textarea, input[type="number"] {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px; color: var(--text);
+      font-family: inherit; font-size: 14px; resize: vertical;
+    }
+    textarea { min-height: 100px; }
+    textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+    .quick-picks { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+    .chip { background: var(--bg); border: 1px solid var(--border);
+            border-radius: 999px; padding: 6px 12px; font-size: 12px;
+            color: var(--muted); cursor: pointer; transition: all .2s; }
+    .chip:hover { border-color: var(--accent); color: var(--text); }
+    .submit { width: 100%; background: var(--accent); color: white; border: none;
+              border-radius: 8px; padding: 14px; font-size: 14px;
+              font-weight: 600; cursor: pointer; transition: all .2s; }
+    .submit:hover:not(:disabled) { background: #3d78e6; transform: translateY(-1px); }
+    .submit:disabled { opacity: 0.6; cursor: not-allowed; }
+    .response { display: flex; flex-direction: column; min-height: 400px; }
+    .response-meta { display: flex; align-items: center; gap: 12px;
+                     margin-bottom: 16px; padding-bottom: 16px;
+                     border-bottom: 1px solid var(--border); }
+    .badge { padding: 4px 10px; border-radius: 6px; font-size: 11px;
+             font-weight: 600; font-family: var(--mono);
+             text-transform: uppercase; }
+    .badge.cache { background: rgba(52,211,153,0.15); color: var(--green); }
+    .badge.llm { background: rgba(79,140,255,0.15); color: var(--accent); }
+    .badge.error { background: rgba(248,113,113,0.15); color: var(--red); }
+    .badge.empty { background: rgba(139,143,154,0.15); color: var(--muted); }
+    .meta-time { font-family: var(--mono); font-size: 12px;
+                 color: var(--muted); margin-left: auto; }
+    .response-body { flex: 1; background: var(--bg); border: 1px solid var(--border);
+                     border-radius: 8px; padding: 16px; font-family: var(--mono);
+                     font-size: 13px; line-height: 1.6; overflow: auto;
+                     color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+    .response-body.has-content { color: var(--text); }
+    .history { margin-top: 24px; font-size: 12px; color: var(--muted); }
+    .history-item { display: flex; justify-content: space-between;
+                    padding: 6px 0; border-bottom: 1px solid var(--border);
+                    font-family: var(--mono); }
+    .history-item:last-child { border-bottom: none; }
+    footer { text-align: center; padding: 16px; font-size: 11px;
+             color: var(--muted); border-top: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="mark">G</div>
+      <div>
+        <h1>LLM Gateway</h1>
+        <p>Express · Redis · Zod · Fail-open</p>
+      </div>
+    </div>
+    <div class="status">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">checking…</span>
+    </div>
+  </header>
+  <main>
+    <section class="panel">
+      <h2>Request</h2>
+      <div class="quick-picks">
+        <button class="chip" data-prompt="5 days in Kyoto, budget 50000 INR">Kyoto 5d</button>
+        <button class="chip" data-prompt="Weekend in Goa, beaches and food">Goa weekend</button>
+        <button class="chip" data-prompt="10-day Rajasthan heritage tour">Rajasthan 10d</button>
+      </div>
+      <div class="field">
+        <label for="prompt">Prompt <span>(min 5, max 2000 chars)</span></label>
+        <textarea id="prompt" placeholder="Describe your ideal trip…"></textarea>
+      </div>
+      <div class="field">
+        <label for="budget">Max budget <span>(INR, optional)</span></label>
+        <input type="number" id="budget" placeholder="e.g. 50000" min="1" />
+      </div>
+      <button class="submit" id="submitBtn">Send Request</button>
+    </section>
+    <section class="panel response">
+      <h2>Response</h2>
+      <div class="response-meta">
+        <span class="badge empty" id="sourceBadge">—</span>
+        <span class="meta-time" id="metaTime"></span>
+      </div>
+      <div class="response-body" id="responseBody">
+        Send the same prompt twice — the second should return from cache.
+      </div>
+      <div class="history" id="history" style="display: none;">
+        <h2 style="margin-top:0">Session history</h2>
+        <div id="historyList"></div>
+      </div>
+    </section>
+  </main>
+  <footer>
+    Same prompt twice → <code>REDIS_CACHE_HIT</code> · Stop Redis → still 200 (fail-open)
+  </footer>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const promptEl = $('prompt');
+    const budgetEl = $('budget');
+    const submitBtn = $('submitBtn');
+    const sourceBadge = $('sourceBadge');
+    const metaTime = $('metaTime');
+    const responseBody = $('responseBody');
+    const historyEl = $('history');
+    const historyList = $('historyList');
+    const statusDot = $('statusDot');
+    const statusText = $('statusText');
+    const history = [];
+
+    document.querySelectorAll('.chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        promptEl.value = chip.dataset.prompt;
+        promptEl.focus();
+      });
+    });
+
+    async function checkHealth() {
+      try {
+        const res = await fetch('/health');
+        const data = await res.json();
+        if (data.status === 'ok') {
+          statusDot.className = 'dot ok';
+          statusText.textContent = `redis: ${data.redis} · up ${Math.floor(data.uptime)}s`;
+        } else {
+          statusDot.className = 'dot degraded';
+          statusText.textContent = `redis: ${data.redis} · degraded`;
+        }
+      } catch {
+        statusDot.className = 'dot down';
+        statusText.textContent = 'unreachable';
+      }
+    }
+    checkHealth();
+    setInterval(checkHealth, 15000);
+
+    function setBadge(kind, text) {
+      sourceBadge.className = `badge ${kind}`;
+      sourceBadge.textContent = text;
+    }
+
+    function renderHistory() {
+      if (history.length === 0) { historyEl.style.display = 'none'; return; }
+      historyEl.style.display = 'block';
+      historyList.innerHTML = history
+        .slice(0, 8)
+        .map((h) => `<div class="history-item"><span>${h.badge}</span><span>${h.ms}ms</span></div>`)
+        .join('');
+    }
+
+    submitBtn.addEventListener('click', async () => {
+      const prompt = promptEl.value.trim();
+      if (prompt.length < 5) {
+        setBadge('error', 'INVALID');
+        responseBody.className = 'response-body has-content';
+        responseBody.textContent = 'Prompt must be at least 5 characters.';
+        return;
+      }
+      const body = { prompt };
+      if (budgetEl.value) body.maxBudgetINR = Number(budgetEl.value);
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Sending…';
+      setBadge('empty', '…');
+      metaTime.textContent = '';
+
+      const started = performance.now();
+      try {
+        const res = await fetch('/api/travel-agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const elapsed = Math.round(performance.now() - started);
+        const data = await res.json();
+
+        responseBody.className = 'response-body has-content';
+        responseBody.textContent = JSON.stringify(data, null, 2);
+        metaTime.textContent = `${elapsed}ms · HTTP ${res.status}`;
+
+        if (!res.ok) setBadge('error', data.error ?? 'ERROR');
+        else if (data.source === 'REDIS_CACHE_HIT') setBadge('cache', 'REDIS_CACHE_HIT');
+        else setBadge('llm', 'LLM_EXECUTION');
+
+        history.unshift({ badge: data.source ?? data.error ?? '?', ms: elapsed });
+        renderHistory();
+      } catch (err) {
+        setBadge('error', 'NETWORK');
+        responseBody.className = 'response-body has-content';
+        responseBody.textContent = String(err);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Send Request';
+      }
+    });
+
+    promptEl.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitBtn.click();
+    });
+  </script>
+</body>
+</html>
