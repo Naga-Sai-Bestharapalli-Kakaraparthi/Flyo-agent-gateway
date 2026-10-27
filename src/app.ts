@@ -95,7 +95,13 @@ export function createApp(deps: AppDeps): express.Express {
         }
 
         const result = await llm(body);
-        await cacheSet(redis, cacheKey, result, 3600);
+        
+        // BEST-EFFORT CACHE WRITE:
+        // We do not await this. If Redis is down, the user still gets a 200 OK.
+        // The .catch() prevents an unhandled promise rejection.
+        cacheSet(redis, cacheKey, result, 3600).catch((err) => {
+          req.log.warn({ err, cacheKey }, 'cache_set_failed_but_request_succeeded');
+        });
 
         req.log.info({ cacheKey }, 'llm_executed');
         return res.status(200).json({ source: 'LLM_EXECUTION', data: result });
@@ -111,7 +117,7 @@ export function createApp(deps: AppDeps): express.Express {
   });
 
   // Centralized error handler
-  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const requestId = (req as any).id;
 
     if (err instanceof z.ZodError) {
@@ -129,7 +135,9 @@ export function createApp(deps: AppDeps): express.Express {
       return res.status(400).json({ error: 'INVALID_JSON', requestId });
     }
 
-    if (err?.type === 'entity.too.large') {
+    // Type assertion for the 'entity.too.large' express parser error
+    const expressErr = err as { type?: string };
+    if (expressErr?.type === 'entity.too.large') {
       return res.status(413).json({ error: 'PAYLOAD_TOO_LARGE', requestId });
     }
 
