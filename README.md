@@ -1,24 +1,26 @@
-# LLM Gateway Resilience
+# Polyglot AI Gateway (TypeScript + Python)
 
-A hardened Express + Redis gateway for LLM-backed APIs. Demonstrates production patterns that keep an API up when Redis is slow, unreachable, or returning garbage.
+A hardened Node/Express gateway paired with a Python/FastAPI AI microservice. Demonstrates production AI engineering patterns: fail-open Redis caching, strict schema validation (Zod + Pydantic), and rate limiting.
 
-## What it does
+## Architecture
+1. **API Gateway (TypeScript/Express):** Handles rate limiting, caching, security (Helmet), and request tracing.
+2. **AI Agent Service (Python/FastAPI):** Handles the GenAI orchestration and prompt execution.
 
-- **Strict validation** — Zod `strict()` schema rejects extra fields; input is trimmed and bounded (5–2000 chars, ≤16kb body).
-- **Deterministic caching** — SHA-256 of the normalized input → Redis key. Same prompt twice = one LLM call.
-- **Fail-open Redis** — Every Redis command is raced against a 300ms timeout. If Redis is slow or down, the request falls through to the LLM instead of hanging.
-- **Corrupt-cache safety** — Invalid JSON in Redis is treated as a miss, not a 500.
-- **Structured logs** — pino with secret redaction and per-request `requestId`.
-- **Security headers** — helmet with a CSP tuned for the included demo UI.
-- **Rate limiting** — 30 req/min on the LLM route.
-- **Graceful shutdown** — SIGTERM/SIGINT drain in-flight requests and quit Redis.
+## What it does (The "Why")
+- **Multi-Language Microservices:** Proves ability to bridge Node.js API routing with Python AI logic.
+- **Strict Validation:** Zod on the TS side, Pydantic on the Python side.
+- **Fail-Open Redis:** If Redis dies, the gateway bypasses the cache and calls the Python AI service directly.
+- **Corrupt-Cache Safety:** Invalid JSON in Redis is treated as a miss, not a 500 error.
 
-## Run locally
+## How to run locally
 
+**1. Start Redis:**
+`docker run -d -p 6379:6379 redis:7-alpine`
+
+**2. Start Python AI Service:**
 ```bash
-cp .env.example .env
-npm install
-# start a local Redis (or point REDIS_URL at one)
-docker run -d -p 6379:6379 redis:7-alpine
-npm run dev
-# open http://localhost:3000
+cd ai_service
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --port 8000
